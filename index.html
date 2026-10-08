@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CampusFlow – Your college life. One flow.</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ========== LANDING ========== -->
+<section id="landing" class="screen">
+  <header class="lnav">
+    <div class="logo"><span class="mark">≈</span>CampusFlow</div>
+    <button class="btn" data-a="start">Get Started</button>
+  </header>
+  <div class="hero">
+    <div>
+      <h1>Your college life.<br>One flow.</h1>
+      <p class="lead">Assignments in one WhatsApp group, tests on a notice board, club work in another chat. CampusFlow pulls every deadline into one place, tells you what to do first, and lets friends keep you honest.</p>
+      <div class="row"><button class="btn big" data-a="start">Get Started</button>
+      <button class="btn ghost big" data-a="how">See how it works</button></div>
+    </div>
+    <div class="mock">
+      <div class="mock-card"><small>CampusFlow recommends you work on this first</small>
+        <b>DSA Assignment</b><span class="badge high">High</span> Due tomorrow</div>
+      <div class="mock-friends">
+        <div><i>A</i>Ananya <b>92%</b></div><div class="me"><i>Y</i>You <b>87%</b></div><div><i>A</i>Arjun <b>81%</b></div>
+      </div>
+    </div>
+  </div>
+  <div class="wrap">
+    <h2>The problem</h2>
+    <p class="lead narrow">Deadlines, tests, club meetings and events live in five different places. Students miss things, not because they're lazy, but because nothing is in one place.</p>
+    <h2>What CampusFlow does</h2>
+    <div class="grid4">
+      <div class="card"><div class="ico">🧭</div><h3>Smart Planning</h3><p>Smart Priority ranks your tasks by deadline and importance. Plan My Day fits them into the hours you have.</p></div>
+      <div class="card"><div class="ico">✅</div><h3>Task Management</h3><p>Assignments, exams, clubs, events and personal tasks together. Search, filter, sort.</p></div>
+      <div class="card"><div class="ico">🤝</div><h3>Friend Accountability</h3><p>See friends' streaks and completion rates, never their private tasks.</p></div>
+      <div class="card"><div class="ico">🏆</div><h3>Weekly Leaderboards</h3><p>Ranked by completion %, not task count, so a light week can still win.</p></div>
+    </div>
+    <h2 id="how">How it works</h2>
+    <ol class="steps">
+      <li><b>Dump everything in.</b> Add tasks one by one, or type a messy sentence into the AI Planning Prototype.</li>
+      <li><b>Follow the plan.</b> Smart Priority shows what to do first; Plan My Day builds a schedule.</li>
+      <li><b>Compete gently.</b> Finish what you planned, climb Weekly Flow, win the canteen round.</li>
+    </ol>
+    <p class="foot">Hackathon prototype · runs fully in your browser · data stays on your device</p>
+  </div>
+</section>
+
+<!-- ========== ONBOARDING ========== -->
+<section id="onboard" class="screen hidden">
+  <form id="nameForm" class="onboard card">
+    <div class="logo"><span class="mark">≈</span>CampusFlow</div>
+    <h2>What should we call you?</h2>
+    <input id="nameInput" maxlength="24" placeholder="Your name" autocomplete="off" required>
+    <button class="btn big" type="submit">Enter CampusFlow</button>
+    <small>No email or password needed. This is a demo.</small>
+  </form>
+</section>
+
+<!-- ========== APP ========== -->
+<section id="app" class="screen hidden">
+  <nav class="topnav">
+    <div class="logo"><span class="mark">≈</span>CampusFlow</div>
+    <div class="links" id="navLinks">
+      <button data-a="nav" data-v="dashboard">Dashboard</button>
+      <button data-a="nav" data-v="tasks">My Tasks</button>
+      <button data-a="nav" data-v="friends">Friends</button>
+      <button data-a="nav" data-v="leaderboard">Leaderboard</button>
+      <button data-a="nav" data-v="profile">Profile</button>
+    </div>
+    <button class="btn ghost sm" data-a="logout">Switch User</button>
+  </nav>
+  <main id="view" class="wrap"></main>
+</section>
+
+<div id="modal" class="modal hidden"><div class="sheet" id="sheet"></div></div>
+<div id="toast" class="toast"></div>
+<script src="script.js"></script>
+</body>
+</html>
