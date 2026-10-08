@@ -56,9 +56,10 @@ function demoActivity() {
 }
 function load() {
   try { S = JSON.parse(localStorage.getItem(KEY)); } catch (e) { S = null; }
+  if (S && !S.chat) S.chat = [];   // older saves have no AI chat yet
 }
 function freshState(name) {
-  S = { user: name, joined: today(), tasks: demoTasks(), friends: demoFriends(), activity: demoActivity() };
+  S = { user: name, joined: today(), tasks: demoTasks(), friends: demoFriends(), activity: demoActivity(), chat: [] };
   save();
 }
 
@@ -193,7 +194,7 @@ function viewDashboard() {
     <div class="card stat"><b>${o.tp}%</b><span>Today's progress</span><div class="bar"><div style="width:${o.tp}%"></div></div></div>
   </div>
   <div class="card rec"><span class="tag" style="color:#aeb8ee">Smart Priority</span><p>CampusFlow recommends you work on this first.</p>
-    ${top ? `<h2>${esc(top.title)}</h2><p>${why(top)}</p><button class="btn sm" style="background:var(--sun);color:var(--ink)" data-a="toggle" data-id="${top.id}">Mark complete</button>` : '<h2>All clear 🎉</h2><p>Nothing pending. Add a task or enjoy the break.</p>'}</div>
+    ${top ? `<h2>${esc(top.title)}</h2><p>${why(top)}</p><button class="btn sm" style="background:var(--sun);color:#1b2340" data-a="toggle" data-id="${top.id}">Mark complete</button>` : '<h2>All clear 🎉</h2><p>Nothing pending. Add a task or enjoy the break.</p>'}</div>
   <div class="cols">
     <div class="card"><h3>Today</h3>${list(todayT, 'Nothing due today.')}</div>
     <div class="card"><h3>Upcoming</h3>${list(upcoming, 'No upcoming deadlines.')}</div>
@@ -268,11 +269,12 @@ function viewProfile() {
     <button class="btn ghost sm" data-a="reset">Reset Demo Data</button><button class="btn ghost sm" data-a="logout">Logout</button></div></div>
     ${weekCard(w)}</div>`;
 }
-const VIEWS = { dashboard: viewDashboard, tasks: viewTasks, friends: viewFriends, leaderboard: viewLeaderboard, profile: viewProfile };
+const VIEWS = { dashboard: viewDashboard, tasks: viewTasks, friends: viewFriends, leaderboard: viewLeaderboard, ai: viewAI, profile: viewProfile };
 function render() {
   $('#view').innerHTML = VIEWS[ui.view]();
   document.querySelectorAll('#navLinks button').forEach(b => b.classList.toggle('on', b.dataset.v === ui.view));
   if (ui.view === 'tasks') { $('#sort').value = ui.sort; renderTaskList(); }
+  if (ui.view === 'ai') renderChat();
 }
 function show(id) { ['landing', 'onboard', 'app'].forEach(s => $('#' + s).classList.toggle('hidden', s !== id)); window.scrollTo(0, 0); }
 
@@ -389,6 +391,260 @@ document.addEventListener('submit', e => {
   }
 });
 
+/* =====================================================================
+   THEME (light / dark). Saved separately so "Switch User" keeps your theme.
+   ===================================================================== */
+const THEME_KEY = 'campusflow_theme';
+function setThemeLabels() {
+  const t = document.documentElement.dataset.theme || 'light';
+  document.querySelectorAll('.themeBtn').forEach(b => { b.textContent = t === 'dark' ? '☀ Light' : '🌙 Dark'; });
+}
+actions.theme = function () {
+  const t = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = t;
+  try { localStorage.setItem(THEME_KEY, t); } catch (e) { /* private mode: theme just won't persist */ }
+  setThemeLabels(); toast(t === 'dark' ? 'Dark mode on' : 'Light mode on');
+};
+
+/* =====================================================================
+   CAMPUSFLOW AI
+   Layer 1 – askAI(): the ONLY function the UI calls. Connect a real model here.
+   Layer 2 – demoAI(): local template-based fallback, labelled "AI Demo Mode".
+   Layer 3 – chat UI below, which just renders whatever askAI() returns.
+
+   TO CONNECT A REAL AI: deploy a small backend/proxy that holds your secret API key,
+   then put its URL in AI_CONFIG.endpoint. NEVER put an API key in this file.
+   The endpoint receives POST JSON { prompt, today, pendingTasks } and must return JSON:
+   { understanding, next, plan:[{title, minutes, priority:"High|Medium|Low",
+     category, due:"YYYY-MM-DD", label}], resources:[{title, description, type, url}] }
+   Only https:// resource URLs are shown, and only what the backend returns.
+   ===================================================================== */
+const AI_CONFIG = { endpoint: '' };   // e.g. 'https://your-backend.example.com/campusflow-ai'
+
+async function askAI(prompt) {
+  if (AI_CONFIG.endpoint) {
+    try {
+      const r = await fetch(AI_CONFIG.endpoint, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt, today: today(),
+          pendingTasks: S.tasks.filter(t => !t.done).slice(0, 15).map(t => ({ title: t.title, due: t.due, priority: t.priority, category: t.category })) })
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      return normalizeAI(await r.json());
+    } catch (e) {
+      const d = demoAI(prompt); d.note = 'The live AI could not be reached, so this answer is from AI Demo Mode.'; return d;
+    }
+  }
+  return demoAI(prompt);
+}
+function normalizeAI(j) {   // makes sure a backend reply can't break the UI
+  return { mode: 'live', understanding: String(j.understanding || ''), next: String(j.next || ''),
+    plan: (j.plan || []).slice(0, 20).map(p => ({ title: String(p.title || 'Task'), minutes: +p.minutes || 30,
+      priority: ['High', 'Medium', 'Low'].includes(p.priority) ? p.priority : 'Medium',
+      category: CATS.includes(p.category) ? p.category : 'Academics',
+      due: /^\d{4}-\d\d-\d\d$/.test(p.due) ? p.due : today(), label: String(p.label || '') })),
+    resources: (j.resources || []).filter(r => /^https:\/\//i.test(r.url || '')).slice(0, 6)
+      .map(r => ({ title: String(r.title || 'Resource'), description: String(r.description || ''), type: String(r.type || 'Link'), url: r.url })) };
+}
+
+/* ---- AI Demo Mode: known-good resource links only ---- */
+const R = (title, description, type, url) => ({ title, description, type, url });
+const SUBJECTS = [
+  { name: 'DSA', re: /\bdsa\b|data structure|\btrees?\b|\bgraphs?\b|algorithm|linked list/,
+    topics: ['Arrays and complexity', 'Linked lists, stacks and queues', 'Binary trees', 'Binary search trees (BST)', 'Graph basics (BFS and DFS)', 'Shortest paths and spanning trees'],
+    res: [R('VisuAlgo', 'Animated visualisations of data structures and algorithms.', 'Interactive', 'https://visualgo.net/en'),
+      R('CP-Algorithms', 'Clear written explanations of classic algorithms.', 'Tutorial', 'https://cp-algorithms.com/'),
+      R('GeeksforGeeks', 'Articles and practice problems on data structures.', 'Tutorial', 'https://www.geeksforgeeks.org/')] },
+  { name: 'DBMS', re: /dbms|\bsql\b|database|normali[sz]ation/,
+    topics: ['ER model and keys', 'Relational algebra', 'SQL queries and joins', 'Normalization', 'Transactions and ACID', 'Indexing'],
+    res: [R('W3Schools SQL', 'Short SQL lessons with a try-it editor.', 'Tutorial', 'https://www.w3schools.com/sql/'),
+      R('SQLBolt', 'Interactive SQL lessons you can run in the browser.', 'Practice', 'https://sqlbolt.com/'),
+      R('PostgreSQL Documentation', 'Official reference documentation.', 'Docs', 'https://www.postgresql.org/docs/')] },
+  { name: 'OS', re: /\bos\b|operating system|deadlock|scheduling/,
+    topics: ['Processes and threads', 'CPU scheduling', 'Synchronization', 'Deadlocks', 'Memory management and paging', 'File systems'],
+    res: [R('Operating Systems: Three Easy Pieces', 'Free online OS textbook.', 'Book', 'http://pages.cs.wisc.edu/~remzi/OSTEP/'),
+      R('GeeksforGeeks', 'OS articles and interview-style questions.', 'Tutorial', 'https://www.geeksforgeeks.org/')] },
+  { name: 'Maths', re: /math|calculus|algebra|probability|statistics/,
+    topics: ['Limits and continuity', 'Differentiation', 'Integration', 'Series and sequences', 'Matrices and linear algebra', 'Probability and statistics'],
+    res: [R('Khan Academy: Calculus 1', 'Free lessons and practice.', 'Course', 'https://www.khanacademy.org/math/calculus-1'),
+      R('Khan Academy: Linear Algebra', 'Vectors, matrices and transformations.', 'Course', 'https://www.khanacademy.org/math/linear-algebra'),
+      R('Khan Academy: Statistics and Probability', 'Core probability and statistics.', 'Course', 'https://www.khanacademy.org/math/statistics-probability')] },
+  { name: 'Physics', re: /physics/,
+    topics: ['Mechanics basics', 'Waves and optics', 'Thermodynamics', 'Electricity and magnetism', 'Modern physics'],
+    res: [R('Khan Academy: Physics', 'Free physics lessons and practice.', 'Course', 'https://www.khanacademy.org/science/physics'),
+      R('HyperPhysics', 'Concept maps for physics topics.', 'Reference', 'http://hyperphysics.phy-astr.gsu.edu/hbase/index.html')] },
+  { name: 'Chemistry', re: /chemistry/,
+    topics: ['Atomic structure', 'Chemical bonding', 'Thermochemistry', 'Equilibrium', 'Organic basics'],
+    res: [R('Khan Academy: Chemistry', 'Free chemistry lessons and practice.', 'Course', 'https://www.khanacademy.org/science/chemistry'),
+      R('LibreTexts Chemistry', 'Open textbooks.', 'Reference', 'https://chem.libretexts.org/')] },
+  { name: 'Web Dev', re: /javascript|\bjs\b|\bhtml\b|\bcss\b|web dev/,
+    topics: ['HTML structure', 'CSS layout', 'JavaScript basics', 'DOM and events', 'Async JavaScript and fetch'],
+    res: [R('MDN Learn Web Development', 'Mozilla\'s beginner-to-advanced guides.', 'Docs', 'https://developer.mozilla.org/en-US/docs/Learn'),
+      R('W3Schools JavaScript', 'Quick lessons with examples.', 'Tutorial', 'https://www.w3schools.com/js/'),
+      R('freeCodeCamp', 'Free structured web development courses.', 'Course', 'https://www.freecodecamp.org/learn/')] },
+  { name: 'Python', re: /python/,
+    topics: ['Syntax and data types', 'Control flow and functions', 'Lists, dicts and sets', 'Object-oriented programming', 'Files and modules'],
+    res: [R('Python Tutorial (official)', 'The official Python docs tutorial.', 'Docs', 'https://docs.python.org/3/tutorial/'),
+      R('W3Schools Python', 'Short lessons with a try-it editor.', 'Tutorial', 'https://www.w3schools.com/python/'),
+      R('freeCodeCamp', 'Free structured courses.', 'Course', 'https://www.freecodecamp.org/learn/')] }
+];
+const fmt = m => m < 60 ? `${m} min` : `${Math.floor(m / 60)} hr${m % 60 ? ' ' + m % 60 + ' min' : ''}`;
+const cap = s => s.charAt(0).toUpperCase() + s.slice(1);
+const niceTitle = s => cap(s.trim()).replace(/\b(dsa|dbms|os|csi|acm|sql|oop)\b/gi, m => m.toUpperCase());
+function resFor(subj, q) {   // subject resources + a YouTube search link (a search URL is always valid)
+  const base = subj ? subj.res : [R('freeCodeCamp', 'Free structured courses on programming and more.', 'Course', 'https://www.freecodecamp.org/learn/'),
+    R('Khan Academy', 'Free lessons across maths and science.', 'Course', 'https://www.khanacademy.org/')];
+  return base.concat([R('YouTube: ' + q, 'Video lessons found by searching this topic.', 'Video', 'https://www.youtube.com/results?search_query=' + encodeURIComponent(q + ' tutorial'))]);
+}
+function studyPlan(p, subj, days, assumed) {
+  const topics = subj ? subj.topics : ['Core concepts overview', 'Key formulas and definitions', 'Worked examples', 'Practice problems', 'Weak areas'];
+  const hit = t => t.toLowerCase().split(/[^a-z]+/).some(w => w.length > 3 && p.includes(w.slice(0, 5)));
+  const slots = Math.max(1, Math.min(days, 14) - (days > 1 ? 1 : 0));
+  let idx = topics.map((t, i) => i);
+  if (idx.length > slots) {   // too many topics for the days: keep the ones the student mentioned first
+    const hits = idx.filter(i => hit(topics[i]));
+    idx = hits.concat(idx.filter(i => !hits.includes(i))).slice(0, slots).sort((a, b) => a - b);
+  }
+  const plan = idx.map((i, k) => ({ title: `Study: ${topics[i]}`, minutes: hit(topics[i]) ? 75 : 60, priority: hit(topics[i]) ? 'High' : 'Medium',
+    category: 'Exams', due: off(k), label: `Day ${k + 1}` }));
+  if (days > 1) plan.push({ title: `Revise and take a mock test: ${subj ? subj.name : 'exam'}`, minutes: 90, priority: 'High', category: 'Exams', due: off(plan.length), label: `Day ${plan.length + 1}` });
+  const mentioned = idx.filter(i => hit(topics[i])).map(i => topics[i]);
+  return { understanding: `You have ${days} day${days > 1 ? 's' : ''} for ${subj ? subj.name : 'your exam'}${assumed ? ' (I assumed 5 days since you didn\'t say)' : ''}. ` +
+    (mentioned.length ? `You mentioned ${mentioned.join(', ')}, so those get more time and High priority. ` : '') + 'Any spare days are buffer.',
+    plan, next: `Start with: ${plan[0].title} (${fmt(plan[0].minutes)})` };
+}
+function dayPlan(p, hours, subj) {
+  let rest = p.replace(/plan my day:?/g, '').replace(/(i have\s+)?[\d.]+\s*(hours?|hrs?)\s*(free)?\s*(today)?/g, '').replace(/\b(today|tonight)\b/g, '');
+  const rank = { High: 0, Medium: 1, Low: 2 };
+  let items = rest.split(/,|;|\band\b/).map(s => s.trim().replace(/[.!?]+$/, '').replace(/^(i\s+)?(need to|have to|want to|must|also)\s+/, '')).filter(s => /[a-z]{3}/.test(s))
+    .map(s => {
+      const pr = /assignment|submit|deadline|finish|complete|project|lab|exam|test|quiz/.test(s) ? 'High' : /revis|study|read|notes|practice/.test(s) ? 'Medium' : 'Low';
+      const title = niceTitle(s.replace(/^(finish|complete|do)\s+(my\s+)?/, '').replace(/^my\s+/, ''));
+      return { title, minutes: { High: 90, Medium: 60, Low: 30 }[pr], priority: pr, category: /assignment|submit|lab|project/.test(s) ? 'Assignments' : /exam|test|quiz|revis|study|notes/.test(s) ? 'Academics' : 'Other', due: today(), label: '' };
+    });
+  let source = 'what you described';
+  if (!items.length) {   // nothing typed: use the student's real pending tasks
+    source = 'your pending CampusFlow tasks';
+    items = S.tasks.filter(t => !t.done).sort((a, b) => score(b) - score(a)).slice(0, 4)
+      .map(t => ({ title: t.title, minutes: { High: 90, Medium: 60, Low: 30 }[t.priority], priority: t.priority, category: t.category, due: t.due, label: '', existing: true }));
+  }
+  items.sort((a, b) => rank[a.priority] - rank[b.priority]);
+  const budget = Math.round(hours * 60), total = items.reduce((s, i) => s + i.minutes, 0), k = Math.min(1, budget / total);
+  items.forEach(i => { i.minutes = Math.max(15, Math.round(i.minutes * k / 15) * 15); });
+  let used = items.reduce((s, i) => s + i.minutes, 0);
+  while (used > budget && items.length > 1) { used -= items.pop().minutes; }
+  if (budget - used >= 30 && !items[0].existing) { items.push({ title: 'Review notes and plan tomorrow', minutes: 30, priority: 'Low', category: 'Academics', due: today(), label: 'Quick task' }); used += 30; }
+  return { understanding: `You have ${hours} hour${hours === 1 ? '' : 's'} free. I built a time-boxed plan from ${source}, highest priority first (${fmt(used)} planned).`,
+    plan: items, next: `Start with: ${items[0].title}` };
+}
+function demoAI(prompt) {
+  const p = prompt.toLowerCase(), subj = SUBJECTS.find(s => s.re.test(p));
+  const dm = p.match(/(\d+)\s*days?/), hm = p.match(/(\d+(?:\.\d+)?)\s*(?:hours?|hrs?)\b/);
+  const topicQ = () => (p.replace(/^.*?(explain|what is|what are|how does|teach me|resources for|resources on|find resources|links for)\s*(for|on|about)?\s*/, '').replace(/[?.!]/g, '').trim() || (subj ? subj.name : 'study skills')).slice(0, 60);
+  let out;
+  if (/\b(explain|what is|what are|how does|teach me)\b/.test(p)) {
+    const t = topicQ();
+    out = { understanding: `AI Demo Mode can't write a custom explanation of "${t}", but here is a quick way to learn it plus trusted places to start. Connect a live AI for full explanations.`,
+      plan: ['Read an overview of', 'Watch a short video on', 'Practice 3 questions on'].map(s => ({ title: `${s} ${t}`, minutes: 20, priority: 'Medium', category: 'Academics', due: today(), label: '' })),
+      resources: resFor(subj, t), next: `Start with: Read an overview of ${t}` };
+  } else if (/\b(resources?|links?|tutorials?|videos?|where can i learn)\b/.test(p) && !dm && !hm) {
+    const t = topicQ();
+    out = { understanding: `Here are trusted starting points for "${t}".`, plan: [], resources: resFor(subj, t), next: 'Open the first resource and spend 20 focused minutes on it.' };
+  } else if (hm) {
+    out = dayPlan(p, parseFloat(hm[1]), subj); out.resources = subj ? resFor(subj, subj.name) : [];
+  } else if (dm || /exam|test|quiz|prepare|study|studies|syllabus/.test(p)) {
+    out = studyPlan(p, subj, dm ? +dm[1] : /tomorrow/.test(p) ? 1 : 5, !dm && !/tomorrow/.test(p));
+    out.resources = resFor(subj, subj ? subj.name : 'exam preparation');
+  } else {
+    out = dayPlan(' ', 2, subj); out.resources = [];
+    out.understanding = 'I wasn\'t sure what you meant, so I planned 2 hours from your pending tasks. Try "I have an exam in 4 days" or "I have 3 hours today and need to finish my DBMS assignment".';
+  }
+  out.mode = 'demo'; return out;
+}
+
+/* ---- Chat UI ---- */
+let aiBusy = false;
+const MODES = [
+  { label: '📚 Plan my studies', fill: 'I have an exam in 5 days and I haven\'t studied ' },
+  { label: '🗓 Plan my day', send: 'Plan my day. I have 3 hours today.' },
+  { label: '💡 Explain a topic', fill: 'Explain ' },
+  { label: '🔎 Find resources', fill: 'Find resources for ' },
+  { label: '🎯 Prepare me for an exam', fill: 'Prepare me for a maths exam in 4 days' }
+];
+const SUGGESTED = ['I have a DSA exam in 5 days and I haven\'t studied trees and graphs yet.',
+  'I have 3 hours today and need to finish my DBMS assignment and revise OS.', 'Explain binary search trees'];
+function viewAI() {
+  return `<div class="aihead"><div><h2>CampusFlow AI</h2><p class="lead" style="margin:4px 0">Your personal academic planning assistant.</p></div>
+    <span class="badge demo" title="No live AI is connected. Answers come from built-in templates.">${AI_CONFIG.endpoint ? 'Live AI connected' : 'AI Demo Mode'}</span></div>
+    <div class="modes">${MODES.map((m, i) => `<button class="chip" data-a="aiMode" data-i="${i}">${m.label}</button>`).join('')}</div>
+    <div class="chat" id="chat" aria-live="polite"></div>
+    <div class="chips">${SUGGESTED.map(s => `<button class="chip" data-a="aiPrompt" data-p="${esc(s)}">${esc(s.length > 48 ? s.slice(0, 46) + '…' : s)}</button>`).join('')}</div>
+    <div class="aiin"><textarea id="aiInput" placeholder="Tell me what you need help with… (Enter to send, Shift+Enter for a new line)"></textarea>
+    <button class="btn" data-a="aiSend">Send</button><button class="btn ghost" data-a="aiClear">Clear chat</button></div>`;
+}
+function aiMsgHtml(m, mi) {
+  const dot = { High: '🔴', Medium: '🟡', Low: '🟢' };
+  let h = `<div class="msg ai"><div class="tag">CampusFlow AI <span class="badge demo">${m.mode === 'live' ? 'Live AI' : 'AI Demo Mode'}</span></div>`;
+  if (m.note) h += `<p class="tag">${esc(m.note)}</p>`;
+  if (m.understanding) h += `<h4>Understanding</h4><p>${esc(m.understanding)}</p>`;
+  if (m.plan.length) {
+    const total = m.plan.reduce((s, p) => s + p.minutes, 0), addable = m.plan.filter(p => !p.existing && !p.added).length;
+    h += `<h4>Your plan • ${fmt(total)}</h4>` + m.plan.map((p, i) => `<div class="pitem"><span>${dot[p.priority]}</span><div><b>${esc(p.title)}</b>
+      <div class="meta">${p.label ? esc(p.label) + ' • ' : ''}${fmt(p.minutes)} • ${p.priority} priority • ${p.existing ? 'already in your tasks' : 'due ' + esc(p.due)}</div></div>
+      ${p.existing ? '' : `<button class="btn sm ghost" data-a="aiAdd" data-m="${mi}" data-i="${i}" ${p.added ? 'disabled' : ''}>${p.added ? 'Added ✓' : '+ Add to CampusFlow'}</button>`}</div>`).join('');
+    if (m.plan.some(p => !p.existing)) h += `<div style="margin-top:10px"><button class="btn" data-a="aiAddAll" data-m="${mi}" ${addable ? '' : 'disabled'}>${addable ? 'Add Plan to My Tasks' : 'Plan added ✓'}</button></div>`;
+  }
+  if (m.next) h += `<p class="next">${esc(m.next)}</p>`;
+  if (m.resources.length) h += `<h4>Resources</h4><div class="rgrid">${m.resources.map(r => `<div class="rcard"><span class="badge demo" style="justify-self:start">${esc(r.type)}</span>
+    <b>${esc(r.title)}</b><span>${esc(r.description)}</span><a class="btn sm" href="${esc(r.url)}" target="_blank" rel="noopener noreferrer">Open Resource</a></div>`).join('')}</div>`;
+  return h + '</div>';
+}
+function renderChat(typing) {
+  const el = $('#chat'); if (!el) return;
+  let h = S.chat.map((m, i) => m.role === 'user' ? `<div class="msg user">${esc(m.text)}</div>` : aiMsgHtml(m, i)).join('');
+  if (!S.chat.length && !typing) h = '<div class="empty">Tell me about an exam, an assignment or how much time you have today.<br>I\'ll build a plan you can add straight to your tasks.</div>';
+  if (typing) h += '<div class="msg ai"><span class="dots" aria-label="Thinking"><span></span><span></span><span></span></span></div>';
+  el.innerHTML = h; el.scrollTop = el.scrollHeight;
+}
+async function sendAI(text) {
+  text = (text || '').trim(); if (!text || aiBusy) return;
+  aiBusy = true; S.chat.push({ role: 'user', text }); S.chat = S.chat.slice(-30); save();
+  const inp = $('#aiInput'); if (inp) inp.value = '';
+  renderChat(true);
+  const t0 = Date.now(); let r;
+  try { r = await askAI(text); }
+  catch (e) { r = { mode: 'demo', understanding: 'Something went wrong. Please try rephrasing your request.', plan: [], resources: [], next: '' }; }
+  const wait = 700 - (Date.now() - t0); if (wait > 0) await new Promise(x => setTimeout(x, wait));
+  r.role = 'ai'; S.chat.push(r); S.chat = S.chat.slice(-30); save(); aiBusy = false; renderChat();
+}
+function addPlanTask(p) {   // uses the SAME task structure as the rest of the app
+  S.tasks.push({ id: uid(), title: p.title, description: `${fmt(p.minutes)} • planned by CampusFlow AI`, category: p.category, due: p.due,
+    time: '', priority: p.priority, done: false, completedAt: null });
+  p.added = true;
+}
+Object.assign(actions, {
+  aiSend() { sendAI($('#aiInput').value); },
+  aiPrompt(el) { sendAI(el.dataset.p); },
+  aiMode(el) {
+    const m = MODES[+el.dataset.i];
+    if (m.send) return sendAI(m.send);
+    const i = $('#aiInput'); i.value = m.fill; i.focus(); i.setSelectionRange(i.value.length, i.value.length);
+  },
+  aiClear() { S.chat = []; save(); renderChat(); toast('Chat cleared'); },
+  aiAdd(el) {
+    const p = S.chat[+el.dataset.m].plan[+el.dataset.i]; if (p.added) return;
+    addPlanTask(p); save(); renderChat(); toast('Added to your tasks ✓');
+  },
+  aiAddAll(el) {
+    const todo = S.chat[+el.dataset.m].plan.filter(p => !p.existing && !p.added);
+    todo.forEach(addPlanTask); save(); renderChat(); toast(`${todo.length} task${todo.length === 1 ? '' : 's'} added to CampusFlow`);
+  }
+});
+document.addEventListener('keydown', e => {   // Enter sends, Shift+Enter makes a new line
+  if (e.target.id === 'aiInput' && e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendAI(e.target.value); }
+});
+
 /* ---------- start ---------- */
 load();
 if (S && S.user) { show('app'); render(); } else show('landing');
+setThemeLabels();
