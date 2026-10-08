@@ -4,6 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CampusFlow – Your college life. One flow.</title>
+<script>
+/* Apply saved theme before the page paints (no flash). First visit follows the system setting. */
+(function(){var t=null;try{t=localStorage.getItem('campusflow_theme')}catch(e){}
+if(!t)t=(window.matchMedia&&matchMedia('(prefers-color-scheme: dark)').matches)?'dark':'light';
+document.documentElement.setAttribute('data-theme',t)})();
+</script>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -12,7 +18,7 @@
 <section id="landing" class="screen">
   <header class="lnav">
     <div class="logo"><span class="mark">≈</span>CampusFlow</div>
-    <button class="btn" data-a="start">Get Started</button>
+    <div class="row"><button class="btn ghost sm themeBtn" data-a="theme" aria-label="Toggle light or dark mode"></button><button class="btn" data-a="start">Get Started</button></div>
   </header>
   <div class="hero">
     <div>
@@ -69,8 +75,10 @@
       <button data-a="nav" data-v="tasks">My Tasks</button>
       <button data-a="nav" data-v="friends">Friends</button>
       <button data-a="nav" data-v="leaderboard">Leaderboard</button>
+      <button data-a="nav" data-v="ai">✨ CampusFlow AI</button>
       <button data-a="nav" data-v="profile">Profile</button>
     </div>
+    <button class="btn ghost sm themeBtn" data-a="theme" aria-label="Toggle light or dark mode"></button>
     <button class="btn ghost sm" data-a="logout">Switch User</button>
   </nav>
   <main id="view" class="wrap"></main>
